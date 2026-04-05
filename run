@@ -1,1 +1,0 @@
-nix-shell -p python3 python3Packages.pygame espeak --run "python ~/baby-animals.py"
