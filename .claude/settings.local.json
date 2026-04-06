@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(nix-env -qaP 'piper-tts')",
+      "Bash(nix search:*)"
+    ]
+  }
+}
