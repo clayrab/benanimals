@@ -31,7 +31,7 @@ def generate_audio_cache():
     for i, word in enumerate(number_words):
         phrases[word] = f"number_{i}"
     # Add misc phrases
-    phrases["uh oh!"] = "uh_oh"
+    phrases["oh no!"] = "oh_no"
     phrases["Press any letter!"] = "intro"
 
     # Find which phrases need generating
@@ -229,7 +229,7 @@ def main():
                     speak(NUMBER_WORDS[digit], audio_cache)
                     exit_combo_start = None
                 else:
-                    speak("uh oh!", audio_cache)
+                    speak("oh no!", audio_cache)
                     exit_combo_start = None
 
             elif event.type == pygame.KEYUP:
