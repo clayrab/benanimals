@@ -3,7 +3,6 @@
 
 import pygame
 import subprocess
-import threading
 import time
 import os
 
@@ -59,22 +58,38 @@ def generate_audio_cache():
     return {text: os.path.join(AUDIO_DIR, f"{key}.wav") for text, key in phrases.items()}
 
 
-def speak(text, audio_cache):
-    """Play pre-generated audio in a background thread."""
-    path = audio_cache.get(text)
-    if not path or not os.path.exists(path):
-        return
-    def _play():
+SPEECH_FADEOUT_MS = 150  # how quickly an interrupted phrase fades out
+
+
+def make_speaker(audio_cache):
+    """Build a speak(text) callable that fades any prior phrase when interrupted."""
+    sounds = {}
+    for text, path in audio_cache.items():
+        if not os.path.exists(path):
+            continue
         try:
-            subprocess.run(
-                ['aplay', '-q', path],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=10,
-            )
-        except:
-            pass
-    threading.Thread(target=_play, daemon=True).start()
+            sounds[text] = pygame.mixer.Sound(path)
+        except Exception as e:
+            print(f"Could not load sound {path}: {e}")
+    n_channels = 20
+    pygame.mixer.set_num_channels(n_channels)
+    channels = [pygame.mixer.Channel(i) for i in range(n_channels)]
+    state = {'idx': -1}
+
+    def speak(text):
+        sound = sounds.get(text)
+        if not sound:
+            return
+        state['idx'] = (state['idx'] + 1) % n_channels
+        target = channels[state['idx']]
+        for ch in channels:
+            if ch is not target and ch.get_busy():
+                ch.fadeout(SPEECH_FADEOUT_MS)
+        target.stop()
+        target.set_volume(1.0)
+        target.play(sound)
+
+    return speak
 
 
 def safe_filename(name):
@@ -96,42 +111,29 @@ def load_images():
     return images
 
 
-def draw_animal(screen, letter, animal_name, color, image=None):
-    """Draw the animal image, letter, and name on screen"""
-    screen.fill((240, 248, 255))  # Light blue background
+FADE_DURATION = 2.4  # seconds for the letter to fade out
 
+
+def scale_to_screen(image, screen):
+    if not image:
+        return None
     width, height = screen.get_size()
+    max_w, max_h = int(width * 0.9), int(height * 0.9)
+    iw, ih = image.get_size()
+    s = min(max_w / iw, max_h / ih)
+    return pygame.transform.smoothscale(image, (int(iw * s), int(ih * s)))
 
-    if image:
-        # Scale image to fit top ~65% of screen, preserving aspect ratio
-        max_img_w = int(width * 0.8)
-        max_img_h = int(height * 0.6)
-        img_w, img_h = image.get_size()
-        scale = min(max_img_w / img_w, max_img_h / img_h)
-        new_w = int(img_w * scale)
-        new_h = int(img_h * scale)
-        scaled = pygame.transform.smoothscale(image, (new_w, new_h))
-        img_rect = scaled.get_rect(center=(width // 2, int(height * 0.35)))
-        screen.blit(scaled, img_rect)
 
-        # Draw "L is for Animal" below the image
-        font_name = pygame.font.Font(None, min(width, height) // 10)
-        combo_text = f"{letter.upper()} is for {animal_name}"
-        combo_surface = font_name.render(combo_text, True, color)
-        combo_rect = combo_surface.get_rect(center=(width // 2, int(height * 0.78)))
-        screen.blit(combo_surface, combo_rect)
-    else:
-        # Fallback: text-only
-        font_big = pygame.font.Font(None, min(width, height) // 2)
-        letter_surface = font_big.render(letter.upper(), True, color)
-        letter_rect = letter_surface.get_rect(center=(width // 2, height // 3))
-        screen.blit(letter_surface, letter_rect)
-
-        font_medium = pygame.font.Font(None, min(width, height) // 6)
-        name_surface = font_medium.render(animal_name, True, color)
-        name_rect = name_surface.get_rect(center=(width // 2, height * 2 // 3))
-        screen.blit(name_surface, name_rect)
-
+def render_frame(screen, scaled_image, letter, color, alpha, big_font):
+    """Draw background, the animal image, and the fading letter overlay."""
+    screen.fill((240, 248, 255))
+    width, height = screen.get_size()
+    if scaled_image:
+        screen.blit(scaled_image, scaled_image.get_rect(center=(width // 2, height // 2)))
+    if alpha > 0 and letter:
+        text = big_font.render(letter.upper(), True, color)
+        text.set_alpha(alpha)
+        screen.blit(text, text.get_rect(center=(width // 2, height // 2)))
     pygame.display.flip()
 
 
@@ -165,7 +167,7 @@ def main():
     os.environ.setdefault('SDL_VIDEO_X11_DGAMOUSE', '0')
 
     pygame.init()
-    pygame.mixer.quit()
+    pygame.mixer.init()
 
     info = pygame.display.Info()
     screen = pygame.display.set_mode((info.current_w, info.current_h), pygame.FULLSCREEN)
@@ -176,6 +178,7 @@ def main():
     print(f"Loaded {len(images)} animal images")
 
     audio_cache = generate_audio_cache()
+    speak = make_speaker(audio_cache)
 
     pygame.event.set_grab(True)
 
@@ -192,7 +195,7 @@ def main():
     screen.blit(exit_text, exit_rect)
 
     pygame.display.flip()
-    speak("Press any letter!", audio_cache)
+    speak("Press any letter!")
 
     clock = pygame.time.Clock()
     running = True
@@ -203,6 +206,21 @@ def main():
     cycle_indices = {letter: 0 for letter in ANIMALS}
     letters_in_order = list(ANIMALS.keys())
     fallback_letter_idx = 0
+
+    big_font = pygame.font.Font(None, min(info.current_w, info.current_h))
+    current_letter = None
+    current_color = None
+    current_scaled_image = None
+    letter_fade_start = None
+    last_drawn_alpha = -1
+
+    def show_animal(letter, animal_name, color):
+        nonlocal current_letter, current_color, current_scaled_image, letter_fade_start, last_drawn_alpha
+        current_letter = letter
+        current_color = color
+        current_scaled_image = scale_to_screen(images.get(animal_name), screen)
+        letter_fade_start = time.time()
+        last_drawn_alpha = -1
 
     while running:
         for event in pygame.event.get():
@@ -225,13 +243,14 @@ def main():
                         idx = cycle_indices[key_name]
                         animal_name, color = entries[idx]
                         cycle_indices[key_name] = (idx + 1) % len(entries)
-                        draw_animal(screen, key_name, animal_name, color, images.get(animal_name))
-                        speak(f"{key_name.upper()} is for {animal_name}", audio_cache)
+                        show_animal(key_name, animal_name, color)
+                        speak(f"{key_name.upper()} is for {animal_name}")
                     exit_combo_start = None
                 elif len(key_name) == 1 and key_name.isdigit():
                     digit = int(key_name)
                     draw_number(screen, digit)
-                    speak(NUMBER_WORDS[digit], audio_cache)
+                    speak(NUMBER_WORDS[digit])
+                    current_letter = None
                     exit_combo_start = None
                 else:
                     letter = letters_in_order[fallback_letter_idx]
@@ -240,14 +259,21 @@ def main():
                     idx = cycle_indices[letter]
                     animal_name, color = entries[idx]
                     cycle_indices[letter] = (idx + 1) % len(entries)
-                    draw_animal(screen, letter, animal_name, color, images.get(animal_name))
-                    speak(f"{letter.upper()} is for {animal_name}", audio_cache)
+                    show_animal(letter, animal_name, color)
+                    speak(f"{letter.upper()} is for {animal_name}")
                     exit_combo_start = None
 
             elif event.type == pygame.KEYUP:
                 key_name = pygame.key.name(event.key).lower()
                 if key_name == 'q':
                     exit_combo_start = None
+
+        if current_letter is not None:
+            elapsed = time.time() - letter_fade_start
+            alpha = max(0, int(255 * (1 - elapsed / FADE_DURATION)))
+            if alpha != last_drawn_alpha:
+                render_frame(screen, current_scaled_image, current_letter, current_color, alpha, big_font)
+                last_drawn_alpha = alpha
 
         if exit_combo_start and (time.time() - exit_combo_start) > 2.0:
             running = False

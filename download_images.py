@@ -15,6 +15,7 @@ WIKI_OVERRIDES = {
     'Urchin': 'Sea urchin',
     'X-ray Fish': 'X-ray tetra',
     'Rhino': 'Rhinoceros',
+    'Turkey': 'Turkey (bird)',
     'Bee': 'Honey bee',
     'Ant': 'Ant',
     'Fish': 'Fish',
