@@ -6,7 +6,6 @@ import subprocess
 import threading
 import time
 import os
-import random
 
 from animals import ANIMALS
 
@@ -31,7 +30,6 @@ def generate_audio_cache():
     for i, word in enumerate(number_words):
         phrases[word] = f"number_{i}"
     # Add misc phrases
-    phrases["oh no!"] = "oh_no"
     phrases["Press any letter!"] = "intro"
 
     # Find which phrases need generating
@@ -202,6 +200,10 @@ def main():
     timeout = 600
     exit_combo_start = None
 
+    cycle_indices = {letter: 0 for letter in ANIMALS}
+    letters_in_order = list(ANIMALS.keys())
+    fallback_letter_idx = 0
+
     while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -219,7 +221,10 @@ def main():
                     running = False
                 elif len(key_name) == 1 and key_name.isalpha():
                     if key_name in ANIMALS:
-                        animal_name, color = random.choice(ANIMALS[key_name])
+                        entries = ANIMALS[key_name]
+                        idx = cycle_indices[key_name]
+                        animal_name, color = entries[idx]
+                        cycle_indices[key_name] = (idx + 1) % len(entries)
                         draw_animal(screen, key_name, animal_name, color, images.get(animal_name))
                         speak(f"{key_name.upper()} is for {animal_name}", audio_cache)
                     exit_combo_start = None
@@ -229,7 +234,14 @@ def main():
                     speak(NUMBER_WORDS[digit], audio_cache)
                     exit_combo_start = None
                 else:
-                    speak("oh no!", audio_cache)
+                    letter = letters_in_order[fallback_letter_idx]
+                    fallback_letter_idx = (fallback_letter_idx + 1) % len(letters_in_order)
+                    entries = ANIMALS[letter]
+                    idx = cycle_indices[letter]
+                    animal_name, color = entries[idx]
+                    cycle_indices[letter] = (idx + 1) % len(entries)
+                    draw_animal(screen, letter, animal_name, color, images.get(animal_name))
+                    speak(f"{letter.upper()} is for {animal_name}", audio_cache)
                     exit_combo_start = None
 
             elif event.type == pygame.KEYUP:
